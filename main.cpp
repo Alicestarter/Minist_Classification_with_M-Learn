@@ -11,6 +11,36 @@
 constexpr int kNumClasses = 10;//类别数
 constexpr int kImageSize = 784;//展开后列数
 
+
+//-------------------- 函数声明 --------------------
+const std::string get_data_dir();//文件夹路径
+class DataSet;//数据集类声明
+DataSet get_subset(const DataSet& full, int n);//从DataSet中提取前N个样本，返回新DataSet（只用于参数搜索）
+std::vector<std::vector<float>> convertLabelsOneHot(const std::vector<uint8_t>& labels, int numClasses);//转换标签为one-hot编码，CNN 要用
+void train_svm(const DataSet& train_set, double C = 10, double gamma = 0.01);//训练SVM的函数
+void test_svm(const DataSet& test_set);//SVM模型测试函数
+double cross_validate_svm(const DataSet& dataset, double C, double gamma, int k_folds = 5);//交叉验证函数，返回平均准确率
+void save_metrics_and_scores(
+    const std::vector<int>& y_true,
+    const std::vector<int>& y_pred,
+    const std::vector<std::vector<float>>& scores,
+    const std::string& metrics_file,
+    const std::string& scores_file
+);//保存指标和分数到CSV文件
+void svm_grid_search(
+    const DataSet& train_set,
+    int subset_size,
+    const std::vector<double>& C_list,
+    const std::vector<double>& gamma_list,
+    int k_folds,
+    double& best_C,
+    double& best_gamma,
+    double& best_acc
+);// SVM 网格搜索函数，返回最佳参数和准确率
+
+
+//---------------字节序相关函数-----------------
+
 // 函数用于获取数据集目录
 const std::string get_data_dir()
 {
@@ -19,64 +49,6 @@ const std::string get_data_dir()
     return "D:/study/计算思维/大作业/代码";
 #endif
 }
-
-// 数据集类，用于加载和存储图像数据和标签
-class DataSet
-{
-public:
-    // 构造函数，接收图像文件名和标签文件名作为参数
-    DataSet(const std::string& image_filename, const std::string& label_filename)
-    {
-        load_images(image_filename); // 加载图像数据
-        load_labels(label_filename); // 加载标签数据
-        flatten_images(); // 展平图像数据，用于SVM
-    }
-    void flatten_images();//展平函数
-    // 存储图像数据的向量，每个图像是一个cv::Mat对象
-    std::vector<cv::Mat> images;
-    std::vector<cv::Mat> normalize_images;//储存归一化图像数据
-    std::vector<std::vector<float>> feature_vectors; // 储存展平后的特征向量
-    // 存储标签数据的向量
-    std::vector<uint8_t> labels;
-    std::vector<std::vector<float>> OneHotlabels;//储存onehot标签
-
-private:
-    // 用于存储读取的原始图像数据的缓冲区
-    std::vector<char> buffer;
-    // 加载图像数据的私有成员函数
-    void load_images(const std::string& filename);
-    // 加载标签数据的私有成员函数
-    void load_labels(const std::string& filename);
-    
-};
-
-//-----------------------------------------------------------------------------
-//展平函数
-void DataSet::flatten_images()
-{
-    feature_vectors.resize(normalize_images.size());
-    for (size_t i = 0; i < normalize_images.size(); ++i)
-    {
-        cv::Mat flat_image = normalize_images[i].reshape(1, 1);
-        std::vector<float> vec;
-        vec.assign((float*)flat_image.datastart, (float*)flat_image.dataend);
-        feature_vectors[i] = vec;
-    }
-}
-
-// 从DataSet中提取前N个样本，返回新DataSet（只用于参数搜索）
-DataSet get_subset(const DataSet& full, int n) {
-    DataSet subset = full;
-    if (n < full.images.size()) {
-        subset.images.resize(n);
-        subset.normalize_images.resize(n);
-        subset.labels.resize(n);
-        subset.OneHotlabels.resize(n);
-        subset.flatten_images(); // 放在最后
-    }
-    return subset;
-}
-
 
 //数据集以二进制格式存储，需要确定字节序以正确解析文件
 // 枚举类型，表示字节序（大端或小端）
@@ -126,6 +98,67 @@ static int read_int_from_binary(std::ifstream& in)
     return num;
 }
 
+
+
+//-------------------- 数据集与工具函数 --------------------
+// DataSet类定义、flatten_images、get_subset、convertLabelsOneHot等
+
+// 数据集类，用于加载和存储图像数据和标签
+class DataSet
+{
+public:
+    // 构造函数，接收图像文件名和标签文件名作为参数
+    DataSet(const std::string& image_filename, const std::string& label_filename)
+    {
+        load_images(image_filename); // 加载图像数据
+        load_labels(label_filename); // 加载标签数据
+        flatten_images(); // 展平图像数据，用于SVM
+    }
+    void flatten_images();//展平函数
+    // 存储图像数据的向量，每个图像是一个cv::Mat对象
+    std::vector<cv::Mat> images;
+    std::vector<cv::Mat> normalize_images;//储存归一化图像数据
+    std::vector<std::vector<float>> feature_vectors; // 储存展平后的特征向量
+    // 存储标签数据的向量
+    std::vector<uint8_t> labels;
+    std::vector<std::vector<float>> OneHotlabels;//储存onehot标签
+
+private:
+    // 用于存储读取的原始图像数据的缓冲区
+    std::vector<char> buffer;
+    // 加载图像数据的私有成员函数
+    void load_images(const std::string& filename);
+    // 加载标签数据的私有成员函数
+    void load_labels(const std::string& filename);
+    
+};
+
+//展平函数
+void DataSet::flatten_images()
+{
+    feature_vectors.resize(normalize_images.size());
+    for (size_t i = 0; i < normalize_images.size(); ++i)
+    {
+        cv::Mat flat_image = normalize_images[i].reshape(1, 1);
+        std::vector<float> vec;
+        vec.assign((float*)flat_image.datastart, (float*)flat_image.dataend);
+        feature_vectors[i] = vec;
+    }
+}
+
+// 从DataSet中提取前N个样本，返回新DataSet（只用于参数搜索）
+DataSet get_subset(const DataSet& full, int n) {
+    DataSet subset = full;
+    if (n < full.images.size()) {
+        subset.images.resize(n);
+        subset.normalize_images.resize(n);
+        subset.labels.resize(n);
+        subset.OneHotlabels.resize(n);
+        subset.flatten_images(); // 放在最后
+    }
+    return subset;
+}
+
 // 加载图像数据的成员函数
 void DataSet::load_images(const std::string& filename)
 {
@@ -165,15 +198,6 @@ void DataSet::load_images(const std::string& filename)
     }
 
 }
-  
-// 转换标签为one-hot编码，CNN 要用
-std::vector<std::vector<float>> convertLabelsOneHot(const std::vector<uint8_t>& labels, int numClasses) {
-    std::vector<std::vector<float>> oneHotLabels(labels.size(), std::vector<float>(numClasses, 0.0));
-    for (size_t i = 0; i < labels.size(); ++i) {
-        oneHotLabels[i][labels[i]] = 1.0;
-    }
-    return oneHotLabels;
-}
 
 // 加载标签数据的成员函数
 void DataSet::load_labels(const std::string& filename)
@@ -196,9 +220,21 @@ void DataSet::load_labels(const std::string& filename)
     OneHotlabels = convertLabelsOneHot(labels, 10); // 实现标签one-hot编码
 }
 
+// 转换标签为one-hot编码，CNN 要用
+std::vector<std::vector<float>> convertLabelsOneHot(const std::vector<uint8_t>& labels, int numClasses) {
+    std::vector<std::vector<float>> oneHotLabels(labels.size(), std::vector<float>(numClasses, 0.0));
+    for (size_t i = 0; i < labels.size(); ++i) {
+        oneHotLabels[i][labels[i]] = 1.0;
+    }
+    return oneHotLabels;
+}
+
+
+//-------------------- SVM相关函数 --------------------
+// train_svm、test_svm、cross_validate_svm、svm_grid_search
 
 //训练SVM的函数
-void train_svm(const DataSet& train_set, double C = 10, double gamma = 0.01)
+void train_svm(const DataSet& train_set, double C , double gamma )
 {
     // 转换特征矩阵：vector<vector<float>> -> cv::Mat (N x 784)
     cv::Mat train_features(train_set.feature_vectors.size(), kImageSize, CV_32FC1);
@@ -230,68 +266,7 @@ void train_svm(const DataSet& train_set, double C = 10, double gamma = 0.01)
     svm->save("mnist_svm.xml");
 }
 
-// 计算并保存多分类指标和混淆矩阵
-void save_metrics_and_scores(
-    const std::vector<int>& y_true,
-    const std::vector<int>& y_pred,
-    const std::vector<std::vector<float>>& scores, // 每个样本的每类得分
-    const std::string& metrics_file,
-    const std::string& scores_file)
-{
-    int num_classes = kNumClasses;
-    std::vector<std::vector<int>> confusion(num_classes, std::vector<int>(num_classes, 0));
-    for (size_t i = 0; i < y_true.size(); ++i)
-        confusion[y_true[i]][y_pred[i]]++;
-
-    // 计算每类的precision/recall/f1
-    std::vector<double> precision(num_classes), recall(num_classes), f1(num_classes);
-    int total_correct = 0;
-    for (int c = 0; c < num_classes; ++c) {
-        int tp = confusion[c][c];
-        int fp = 0, fn = 0;
-        for (int k = 0; k < num_classes; ++k) {
-            if (k != c) {
-                fp += confusion[k][c];
-                fn += confusion[c][k];
-            }
-        }
-        int denom_p = tp + fp, denom_r = tp + fn;
-        precision[c] = denom_p ? (double)tp / denom_p : 0;
-        recall[c] = denom_r ? (double)tp / denom_r : 0;
-        f1[c] = (precision[c] + recall[c]) ? 2 * precision[c] * recall[c] / (precision[c] + recall[c]) : 0;
-        total_correct += tp;
-    }
-    double accuracy = (double)total_correct / y_true.size();
-
-    // 保存指标
-    std::ofstream ofs(metrics_file);
-    ofs << "accuracy," << accuracy << "\n";
-    ofs << "class,precision,recall,f1\n";
-    for (int c = 0; c < num_classes; ++c)
-        ofs << c << "," << precision[c] << "," << recall[c] << "," << f1[c] << "\n";
-    ofs << "confusion_matrix\n";
-    for (int c = 0; c < num_classes; ++c) {
-        for (int k = 0; k < num_classes; ++k)
-            ofs << confusion[c][k] << (k == num_classes - 1 ? "\n" : ",");
-    }
-    ofs.close();
-
-    // 保存每个样本的真实标签、预测标签、每类得分（用于python画ROC/AUC）
-    std::ofstream ofs2(scores_file);
-    ofs2 << "true_label,pred_label";
-    for (int c = 0; c < num_classes; ++c) ofs2 << ",score_" << c;
-    ofs2 << "\n";
-    for (size_t i = 0; i < y_true.size(); ++i) {
-        ofs2 << y_true[i] << "," << y_pred[i];
-        for (int c = 0; c < num_classes; ++c)
-            ofs2 << "," << scores[i][c];
-        ofs2 << "\n";
-    }
-    ofs2.close();
-}
-
-
-//SVM模型测试
+//SVM模型测试函数
 void test_svm(const DataSet& test_set)
 {
     cv::Ptr<cv::ml::SVM> svm = cv::ml::SVM::load("mnist_svm.xml");
@@ -334,7 +309,7 @@ void test_svm(const DataSet& test_set)
 }
 
 // 交叉验证函数，返回平均准确率
-double cross_validate_svm(const DataSet& dataset, double C, double gamma, int k_folds = 5) {
+double cross_validate_svm(const DataSet& dataset, double C, double gamma, int k_folds) {
     // 构造特征和标签矩阵
     int N = dataset.feature_vectors.size();
     cv::Mat features(N, kImageSize, CV_32FC1);
@@ -403,6 +378,100 @@ double cross_validate_svm(const DataSet& dataset, double C, double gamma, int k_
     return total_acc / k_folds;
 }
 
+
+//-------------------- 评估与保存指标函数 --------------------
+// save_metrics_and_scores
+// 计算并保存多分类指标和混淆矩阵——SVM
+void save_metrics_and_scores(
+    const std::vector<int>& y_true,
+    const std::vector<int>& y_pred,
+    const std::vector<std::vector<float>>& scores, // 每个样本的每类得分
+    const std::string& metrics_file,
+    const std::string& scores_file)
+{
+    int num_classes = kNumClasses;
+    std::vector<std::vector<int>> confusion(num_classes, std::vector<int>(num_classes, 0));
+    for (size_t i = 0; i < y_true.size(); ++i)
+        confusion[y_true[i]][y_pred[i]]++;
+
+    // 计算每类的precision/recall/f1
+    std::vector<double> precision(num_classes), recall(num_classes), f1(num_classes);
+    int total_correct = 0;
+    for (int c = 0; c < num_classes; ++c) {
+        int tp = confusion[c][c];
+        int fp = 0, fn = 0;
+        for (int k = 0; k < num_classes; ++k) {
+            if (k != c) {
+                fp += confusion[k][c];
+                fn += confusion[c][k];
+            }
+        }
+        int denom_p = tp + fp, denom_r = tp + fn;
+        precision[c] = denom_p ? (double)tp / denom_p : 0;
+        recall[c] = denom_r ? (double)tp / denom_r : 0;
+        f1[c] = (precision[c] + recall[c]) ? 2 * precision[c] * recall[c] / (precision[c] + recall[c]) : 0;
+        total_correct += tp;
+    }
+    double accuracy = (double)total_correct / y_true.size();
+
+    // 保存指标
+    std::ofstream ofs(metrics_file);
+    ofs << "accuracy," << accuracy << "\n";
+    ofs << "class,precision,recall,f1\n";
+    for (int c = 0; c < num_classes; ++c)
+        ofs << c << "," << precision[c] << "," << recall[c] << "," << f1[c] << "\n";
+    ofs << "confusion_matrix\n";
+    for (int c = 0; c < num_classes; ++c) {
+        for (int k = 0; k < num_classes; ++k)
+            ofs << confusion[c][k] << (k == num_classes - 1 ? "\n" : ",");
+    }
+    ofs.close();
+
+    // 保存每个样本的真实标签、预测标签、每类得分（用于python画ROC/AUC）
+    std::ofstream ofs2(scores_file);
+    ofs2 << "true_label,pred_label";
+    for (int c = 0; c < num_classes; ++c) ofs2 << ",score_" << c;
+    ofs2 << "\n";
+    for (size_t i = 0; i < y_true.size(); ++i) {
+        ofs2 << y_true[i] << "," << y_pred[i];
+        for (int c = 0; c < num_classes; ++c)
+            ofs2 << "," << scores[i][c];
+        ofs2 << "\n";
+    }
+    ofs2.close();
+}
+
+//SVM网格搜索函数
+void svm_grid_search(
+    const DataSet& train_set,
+    int subset_size,
+    const std::vector<double>& C_list,
+    const std::vector<double>& gamma_list,
+    int k_folds,
+    double& best_C,
+    double& best_gamma,
+    double& best_acc
+) {
+    DataSet small_train_set = get_subset(train_set, subset_size);
+    best_acc = 0;
+    best_C = C_list[0];
+    best_gamma = gamma_list[0];
+    for (double C : C_list) {
+        for (double gamma : gamma_list) {
+            double acc = cross_validate_svm(small_train_set, C, gamma, k_folds);
+            std::cout << "C=" << C << ", gamma=" << gamma << ", CV acc=" << acc << std::endl;
+            if (acc > best_acc) {
+                best_acc = acc;
+                best_C = C;
+                best_gamma = gamma;
+            }
+        }
+    }
+    std::cout << "Best C=" << best_C << ", Best gamma=" << best_gamma << ", Best CV acc=" << best_acc << std::endl;
+}
+
+
+//-------------------- 主函数 --------------------
 int main()
 {
     
@@ -411,36 +480,23 @@ int main()
     DataSet train_set(data_dir + "/train-images.idx3-ubyte", data_dir + "/train-labels.idx1-ubyte"); // 创建训练数据集对象
     DataSet test_set(data_dir + "/t10k-images.idx3-ubyte", data_dir + "/t10k-labels.idx1-ubyte"); // 创建测试数据集对象
 
-    //2.数据集预处理
-    //归一化和转化标签   在创建数据集时已实现归一化，one-hot编码标签
+    //2.模型调用
     
+    // a.---------------SVM-------------------
+    /*
+	// 进行SVM网格搜索，找到最佳参数
+    int subset_size = 2000;
+    std::vector<double> C_list = { 0.1, 1, 10, 100 };
+    std::vector<double> gamma_list = { 0.001, 0.01, 0.1, 1 };
+    double best_acc, best_C, best_gamma;
+    svm_grid_search(train_set, subset_size, C_list, gamma_list, 3, best_C, best_gamma, best_acc);
 
-    //3.模型调用
-    ////只用部分数据做参数搜索
-    //int subset_size = 2000;
-    //DataSet small_train_set = get_subset(train_set, subset_size);
-
-    //std::vector<double> C_list = { 0.1, 1, 10, 100 };
-    //std::vector<double> gamma_list = { 0.001, 0.01, 0.1, 1 };
-    //double best_acc = 0;
-    //double best_C = 1, best_gamma = 0.01;
-    //for (double C : C_list) {
-    //    for (double gamma : gamma_list) {
-    //        double acc = cross_validate_svm(small_train_set, C, gamma, 3); // 3折更快
-    //        std::cout << "C=" << C << ", gamma=" << gamma << ", CV acc=" << acc << std::endl;
-    //        if (acc > best_acc) {
-    //            best_acc = acc;
-    //            best_C = C;
-    //            best_gamma = gamma;
-    //        }
-    //    }
-    //}
-    //std::cout << "Best C=" << best_C << ", Best gamma=" << best_gamma << ", Best CV acc=" << best_acc << std::endl;
-
-    // 用最优参数训练全量模型
-    //train_svm(train_set, best_C, best_gamma);
-    //std::cout << "SVM训练完成！" << std::endl;
+    //用最优参数训练全量模型
+    train_svm(train_set, best_C, best_gamma);
+    std::cout << "SVM训练完成！" << std::endl;
+    */
 
     test_svm(test_set);
+
     return 0;
 }
